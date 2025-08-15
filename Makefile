@@ -27,6 +27,7 @@ CFLAGS   := -std=$(CSTD) $(INCLUDES) -O0
 
 # Static libs and Apple frameworks for raylib on macOS.
 RAYLIB := lib/raylib_arm64.a
+BOX2D	:= lib/box2d_arm64.a
 FRAMEWORKS := -framework CoreVideo -framework IOKit -framework Cocoa -framework OpenGL
 # If you add Box2D (C++), use clang++ to link and add the static lib after objects.
 # CXX := clang++
@@ -35,7 +36,7 @@ FRAMEWORKS := -framework CoreVideo -framework IOKit -framework Cocoa -framework 
 # Link rule: build the final binary from all objects.
 # "bin" is an order-only prerequisite so the dir exists but doesn't force relink.
 bin/$(PROG): $(OBJ) | bin
-	$(CC) $(OBJ) $(RAYLIB) $(FRAMEWORKS) -o $@
+	$(CC) $(OBJ) $(RAYLIB) $(BOX2D) $(FRAMEWORKS) -o $@
 	# With Box2D:
 	# $(CXX) $(OBJ) $(RAYLIB) $(BOX2D) $(FRAMEWORKS) -o $@
 
