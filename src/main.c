@@ -1,4 +1,5 @@
 #include <stdbool.h>
+#include <stdlib.h>
 #include <assert.h>
 #include <stdio.h>
 #include "raylib.h"
@@ -21,24 +22,37 @@
 #define MAX_BOXES 1000
 #define MAX_JOINTS 100
 #define MAX_LAYOUT_BOXES 100
-#define SPAWN_COOLDOWN_MS 100.0f
+#define SPAWN_COOLDOWN_MS 500.0f
 
-#define SPAWNABLE_BOX_SIZE (b2BoxScale){0.1f, 0.1f} 
-#define BOX_DENSITY 1.0f
+#define LAYOUT_BOX_DENSITY 1.0f
+#define LAYOUT_BOX_FRICTION 0.3f
+
+#define DOMINO_DENSITY 1.0f
+#define DOMINO_FRICTION 0.3f
+
+#define SPAWNABLE_BOX_SIZE (b2BoxScale){2.0f, 2.0f} 
+#define SPAWNABLE_BOX_DENSITY 10.0f
+#define BALL_DENSITY 0.4f
 #define BOX_FRICTION 0.3f
 
 #define IS_DYNAMIC 1
 #define IS_STATIC 0  
 
-#define BALL_COUNT 0
+#define BALL_COUNT 1
 
 #define recordTime(t) gettimeofday(&t, NULL);
 
-#define AUTOPAUSE 0
+#define AUTOPAUSE 1
 bool SimulationPaused = AUTOPAUSE;
 
 typedef struct timeval timeval;
 timeval t_LastSpawn, t_SpawnAttempt;
+
+float randf(float min, float max){
+    int imin = (int)min*100;
+    int imax = (int)max*100;
+    return (float)(imin+(rand() % imax-imin))/100.0f;
+}
 
 unsigned long timeDiff(timeval start, timeval stop){
     unsigned long secDiff = stop.tv_sec - start.tv_sec;
@@ -156,7 +170,7 @@ void DrawBox(Box rect){
 void DrawBall(Ball b){
     b2Transform tr = b2Body_GetTransform(b.id);
     Vector2 pos = worldToScreen(tr.p);
-    DrawCircleV(pos,b.radius, RED);
+    DrawCircleV(pos,b.radius*PPM, RED);
 }
 
 void DrawJoint(Joint j){
@@ -191,7 +205,8 @@ typedef struct scaleHelper{
     float height;
 }b2BoxScale;
 
-Box CreateBox(b2Vec2 pos, b2BoxScale scale, bool isDynamic){
+
+Box CreateBox(b2Vec2 pos, b2BoxScale scale, float density, float friction, bool isDynamic){
     b2BodyDef bodyDef = b2DefaultBodyDef();
     b2Vec2 hExtent = (b2Vec2){scale.width/2.0f, scale.height/2.0f};
 
@@ -206,14 +221,16 @@ Box CreateBox(b2Vec2 pos, b2BoxScale scale, bool isDynamic){
     b2Polygon dynamicBox = b2MakeBox(hExtent.x, hExtent.y);
     b2ShapeDef shapeDef = b2DefaultShapeDef();
 
-    if (scale.width==SPAWNABLE_BOX_SIZE.width
-    &&  scale.height==SPAWNABLE_BOX_SIZE.height) shapeDef.density = BOX_DENSITY;
-    else shapeDef.density = 1.0f;
-    
+    shapeDef.density = density;
+    shapeDef.material.friction = friction; 
 
-    shapeDef.material.friction = BOX_FRICTION; 
     b2CreatePolygonShape(bodyId, &shapeDef, &dynamicBox);
     return (Box){.id = bodyId, .hExtent=hExtent};
+}
+Box CreateBoxBot(b2Vec2 pos, b2BoxScale scale, float density, float friction, bool isDynamic){
+    b2Vec2 bot = (b2Vec2){pos.x, pos.y + (scale.height/2.0f)};
+
+    return CreateBox(bot,scale,isDynamic, density, friction);
 }
 
 Box Boxes[MAX_BOXES]; int BoxCount = 0;
@@ -237,7 +254,7 @@ Ball CreateBall(b2Vec2 pos, float radius, bool isDynamic){
         .radius=radius
     };
     b2ShapeDef shapeDef = b2DefaultShapeDef();
-    shapeDef.density = BOX_DENSITY;
+    shapeDef.density = BALL_DENSITY; 
     shapeDef.material.friction = BOX_FRICTION; 
     b2CreateCircleShape(bodyId, &shapeDef, &circle);
     return (Ball){.id = bodyId, .radius=radius};
@@ -250,7 +267,7 @@ void AttemptSpawnBox(Vector2 mousePos){
         if (BoxCount<MAX_BOXES){
             bool cooldownElapsed = timeDiff(t_LastSpawn, t_SpawnAttempt)>SPAWN_COOLDOWN_MS; 
             if (cooldownElapsed){ 
-                Boxes[BoxCount] = CreateBox(WorldMousePos, SPAWNABLE_BOX_SIZE, IS_DYNAMIC); // isDynamic);
+                Boxes[BoxCount] = CreateBox(WorldMousePos, SPAWNABLE_BOX_SIZE,SPAWNABLE_BOX_DENSITY, BOX_FRICTION, IS_DYNAMIC); // isDynamic);
                 BoxCount++;
                 recordTime(t_LastSpawn);
             }
@@ -264,8 +281,22 @@ b2JointId CreateDefaultJointBetween(b2BodyId id_a, b2BodyId id_b, b2Vec2 pivot){
     def.base.bodyIdB = id_b;
     def.base.localFrameA.p = b2Body_GetLocalPoint(id_a, pivot);
     def.base.localFrameB.p = b2Body_GetLocalPoint(id_b, pivot);
-    def.lowerAngle = -45.0f * DEG_TO_RAD;
-    def.upperAngle = 90.0f * DEG_TO_RAD;
+    def.lowerAngle = -26.0f * DEG_TO_RAD;
+    def.upperAngle = 45.0f * DEG_TO_RAD;
+    def.enableLimit = true;
+    b2JointId jointId = b2CreateRevoluteJoint(worldId, &def);
+    Joints[JointCount++] = (Joint){.id=jointId};
+    return jointId;
+}
+b2JointId WeldBodies(b2BodyId id_a, b2BodyId id_b, b2Vec2 pivot){
+    b2Transform atr = b2Body_GetTransform(id_a); 
+    b2RevoluteJointDef def = b2DefaultRevoluteJointDef();
+    def.base.bodyIdA = id_a;
+    def.base.bodyIdB = id_b;
+    def.base.localFrameA.p = b2Body_GetLocalPoint(id_a, pivot);
+    def.base.localFrameB.p = b2Body_GetLocalPoint(id_b, pivot);
+    def.lowerAngle = 0.0f; 
+    def.upperAngle = 0.0f;
     def.enableLimit = true;
     b2JointId jointId = b2CreateRevoluteJoint(worldId, &def);
     Joints[JointCount++] = (Joint){.id=jointId};
@@ -275,6 +306,8 @@ b2JointId CreateDefaultJointBetween(b2BodyId id_a, b2BodyId id_b, b2Vec2 pivot){
 // ------MAIN FILE-------
 // ----------------------
 
+bool QueueRestart = false;
+
 void HandleInput(){
         Vector2 mousePos = {GetMouseX(), GetMouseY()};
         b2Vec2 wmouse = screenToWorldV(mousePos);
@@ -283,6 +316,7 @@ void HandleInput(){
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))  printf("WMOUSE: %f,%f\n",wmouse.x,wmouse.y);
 
         if(IsKeyPressed(KEY_P)) SimulationPaused=!SimulationPaused;
+        if(IsKeyPressed(KEY_R)) QueueRestart=true; 
     
 }
 void HandleDrawing(){
@@ -308,25 +342,27 @@ void HandleDrawing(){
                     BoxCount,MAX_BOXES,
                     SimulationPaused);
         }
-
         FrameCount++;
 }
 
 
 void AddLayoutBox(b2Vec2 pos, b2BoxScale scale, bool isStatic){
     if (LayoutBoxCount < MAX_LAYOUT_BOXES)
-        LayoutBoxes[LayoutBoxCount++] = CreateBox(pos, scale, isStatic);
+        LayoutBoxes[LayoutBoxCount++] = CreateBox(pos, scale, LAYOUT_BOX_DENSITY, LAYOUT_BOX_FRICTION, isStatic);
+}
+void AddLayoutDomino(b2Vec2 bot, b2BoxScale scale, bool isStatic){
+    if (LayoutBoxCount < MAX_LAYOUT_BOXES)
+        LayoutBoxes[LayoutBoxCount++] = CreateBoxBot(bot, scale, DOMINO_DENSITY, DOMINO_FRICTION, isStatic);
 }
 void AddLayoutGeometry(b2Vec2 worldSize){
-    b2BoxScale floorCeil_Scale = (b2BoxScale){worldSize.x, 0.5f};
     // floor
     AddLayoutBox((b2Vec2)   {worldSize.x/2.0f , 1.0f},
-                (b2BoxScale){worldSize.x, 0.5f},
+                (b2BoxScale){worldSize.x*2, 0.5f},
                 IS_STATIC);
     //roof
-    AddLayoutBox((b2Vec2)   {worldSize.x/2.0f, worldSize.y},
-                (b2BoxScale){worldSize.x, 0.5f},
-                 IS_STATIC);
+//    AddLayoutBox((b2Vec2)   {worldSize.x/2.0f, worldSize.y},
+//                (b2BoxScale){worldSize.x, 0.5f},
+//                 IS_STATIC);
 
 
     // left wall
@@ -334,29 +370,62 @@ void AddLayoutGeometry(b2Vec2 worldSize){
                  (b2BoxScale){0.5f, worldSize.y},
                  IS_STATIC);
     // right wall
-    AddLayoutBox((b2Vec2)    {worldSize.x, worldSize.y/2.0f},
-                 (b2BoxScale){0.5f, worldSize.y},
-                 IS_STATIC);
+//    AddLayoutBox((b2Vec2)    {worldSize.x, worldSize.y/2.0f},
+//                 (b2BoxScale){0.5f, worldSize.y},
+//                 IS_STATIC);
 
     // domino platform
-    AddLayoutBox((b2Vec2)    {24.7f, 4.3f},
-                 (b2BoxScale){22.0f, 6.0f},
-                 IS_STATIC);
+//    AddLayoutBox((b2Vec2)    {24.8f, 4.2f},
+//                 (b2BoxScale){22.0f, 2.0f},
+//                 IS_STATIC);
 
 
-    b2Vec2 seesawPivot = (b2Vec2){7.2f, 10.0f};
+    b2Vec2 seesawPivot = (b2Vec2){7.2f, 4.0f};
 
     // Seesaw pillar
-    AddLayoutBox((b2Vec2)    {seesawPivot.x, 5.0f}, 
-                 (b2BoxScale){1.0f,10.0f},
+    int pillarIDX = LayoutBoxCount;
+    AddLayoutBox((b2Vec2)    {seesawPivot.x, 1.0f}, 
+                 (b2BoxScale){1.0f,4.0f},
                  IS_STATIC);
 
     // seesaw platform
+    int platformIDX = LayoutBoxCount;
     AddLayoutBox((b2Vec2)    {seesawPivot.x, seesawPivot.y},
                  (b2BoxScale){13.5f,1.0f},
                  IS_DYNAMIC);
 
-    CreateDefaultJointBetween(LayoutBoxes[LayoutBoxCount-2].id, LayoutBoxes[LayoutBoxCount-1].id, seesawPivot);
+    // ball holder.
+    int ballHolderIDX = LayoutBoxCount;
+    AddLayoutBox((b2Vec2)    {seesawPivot.x-(13.5f/2.0f), seesawPivot.y+0.5f},
+                 (b2BoxScale){0.2f,2.0f},
+                 IS_DYNAMIC);
+
+    WeldBodies(LayoutBoxes[platformIDX].id, LayoutBoxes[ballHolderIDX].id, (b2Vec2){0.5f,10.5f});
+
+    CreateDefaultJointBetween(LayoutBoxes[pillarIDX].id, LayoutBoxes[platformIDX].id, seesawPivot);
+    
+    // DOMINOS
+
+    float dominoGap = 0.7f;
+    float dominoOffset = 16.0f;
+    b2BoxScale dominoSize = (b2BoxScale){0.35f, 2.0f};
+    int dominoCount = 10;
+    for (int i = 0; i<dominoCount; i++){
+        float x = dominoOffset + ( (dominoSize.width + dominoGap) * i);
+        dominoSize.width*=1.2;
+        dominoSize.height+=((1.05+(i/10.0f)));
+        AddLayoutDomino((b2Vec2){x, 1.2f}, dominoSize, IS_DYNAMIC);
+    }
+
+    Balls[0] = CreateBall((b2Vec2){1.5f,13.0f},1.0f, IS_DYNAMIC);
+
+}
+
+void RestartSimulation(){
+    BoxCount=0;
+    JointCount=0;
+    LayoutBoxCount=0;
+    b2DestroyWorld(worldId);
 }
 
 int main(){
@@ -369,18 +438,23 @@ int main(){
     debugFont = LoadFont("fonts/0xProtoNerdFont-Regular.ttf");
 
 //b2setup()
-    b2Vec2 worldSize = (b2Vec2){windowSize.x/PPM, windowSize.y/PPM};
-    float gravity_y = -10.f;
-    worldId = InitWorld(gravity_y);
-    AddLayoutGeometry(worldSize);
+    do{
+        QueueRestart = false;
+        b2Vec2 worldSize = (b2Vec2){windowSize.x/PPM, windowSize.y/PPM};
+        float gravity_y = -10.f;
+        worldId = InitWorld(gravity_y);
+        AddLayoutGeometry(worldSize);
 
-    while (!WindowShouldClose()) {
-        HandleInput();
-        if (!SimulationPaused) b2World_Step(worldId, timeStep, subStepCount);
-        BeginDrawing();
-        HandleDrawing();
-        EndDrawing();
-    }
+        while (!WindowShouldClose() && !QueueRestart) {
+            HandleInput();
+            if (!SimulationPaused) b2World_Step(worldId, timeStep, subStepCount);
+            BeginDrawing();
+            HandleDrawing();
+            EndDrawing();
+        }
+
+        if (QueueRestart) RestartSimulation();
+    } while(QueueRestart==true);
 
     CloseWindow(); 
 }
