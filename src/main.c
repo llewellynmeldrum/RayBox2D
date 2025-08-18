@@ -10,6 +10,13 @@
 #include "box2d/types.h"
 #include <sys/time.h>
 
+
+enum categories{
+    BUTTON_BODY = 0x00000001,
+    BUTTON_SENSOR = 0x00000002,
+    BALL = 0x00000004
+};
+
 #define RED_TRANSLUCENT (Color){0xFF, 0x00, 0x00, 0x40}
 
 
@@ -38,11 +45,14 @@
 #define IS_DYNAMIC 1
 #define IS_STATIC 0  
 
+#define YES_LINES 1
+#define NO_LINES 0  
+
 #define BALL_COUNT 1
 
 #define recordTime(t) gettimeofday(&t, NULL);
 
-#define AUTOPAUSE 1
+#define AUTOPAUSE 0
 bool SimulationPaused = AUTOPAUSE;
 
 typedef struct timeval timeval;
@@ -92,8 +102,8 @@ typedef struct ball{
 
 typedef struct revJoint{
     b2JointId id;
-
 }Joint;
+
 
 Vector2 worldToScreen(b2Vec2 worldPos){
     Vector2 screenPos;
@@ -142,7 +152,7 @@ void DrawBBoxLines(Box rect){
 
 }
 
-void DrawBox(Box rect){
+void DrawBox(Box rect, Color c, bool drawLines){
     b2Transform tr = b2Body_GetTransform(rect.id);
     float b2Rad = b2Rot_GetAngle(tr.q);
 
@@ -163,7 +173,7 @@ void DrawBox(Box rect){
     };
     Vector2 rl_RotOrigin = (Vector2){w * 0.5f, h*0.5f};
 
-    DrawRectanglePro(rl_Rec, rl_RotOrigin, rl_Deg, WHITE);
+    DrawRectanglePro(rl_Rec, rl_RotOrigin, rl_Deg, c);
     //DrawBBoxLines(rect);
 }
 
@@ -261,17 +271,22 @@ Ball CreateBall(b2Vec2 pos, float radius, bool isDynamic){
 }
 
 
-void AttemptSpawnBox(Vector2 mousePos){
-        b2Vec2 WorldMousePos = screenToWorldV(mousePos);
+
+void AttemptSpawnBox(b2Vec2 worldPos){
         recordTime(t_SpawnAttempt);
         if (BoxCount<MAX_BOXES){
             bool cooldownElapsed = timeDiff(t_LastSpawn, t_SpawnAttempt)>SPAWN_COOLDOWN_MS; 
             if (cooldownElapsed){ 
-                Boxes[BoxCount] = CreateBox(WorldMousePos, SPAWNABLE_BOX_SIZE,SPAWNABLE_BOX_DENSITY, BOX_FRICTION, IS_DYNAMIC); // isDynamic);
+                Boxes[BoxCount] = CreateBox(worldPos, SPAWNABLE_BOX_SIZE,SPAWNABLE_BOX_DENSITY, BOX_FRICTION, IS_DYNAMIC);
                 BoxCount++;
                 recordTime(t_LastSpawn);
             }
         }   
+}
+
+void SpawnBoxAtScreenPos(Vector2 screenPos){
+    b2Vec2 worldPos= screenToWorldV(screenPos);
+    AttemptSpawnBox(worldPos);
 }
 
 b2JointId CreateDefaultJointBetween(b2BodyId id_a, b2BodyId id_b, b2Vec2 pivot){
@@ -311,8 +326,7 @@ bool QueueRestart = false;
 void HandleInput(){
         Vector2 mousePos = {GetMouseX(), GetMouseY()};
         b2Vec2 wmouse = screenToWorldV(mousePos);
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) AttemptSpawnBox(mousePos);
-
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) SpawnBoxAtScreenPos(mousePos);
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))  printf("WMOUSE: %f,%f\n",wmouse.x,wmouse.y);
 
         if(IsKeyPressed(KEY_P)) SimulationPaused=!SimulationPaused;
@@ -324,9 +338,9 @@ void HandleDrawing(){
         DrawDebugMenu(15,15);
 
 
-        for (int i = 0; i<LayoutBoxCount; i++) DrawBox(LayoutBoxes[i]);
+        for (int i = 0; i<LayoutBoxCount; i++) DrawBox(LayoutBoxes[i], RAYWHITE, NO_LINES);
 
-        for (int i = 0; i<BoxCount; i++) DrawBox(Boxes[i]);
+        for (int i = 0; i<BoxCount; i++) DrawBox(Boxes[i], WHITE, NO_LINES);
 
         for (int i = 0; i<BALL_COUNT; i++) DrawBall(Balls[i]);
 
@@ -380,7 +394,8 @@ void AddLayoutGeometry(b2Vec2 worldSize){
 //                 IS_STATIC);
 
 
-    b2Vec2 seesawPivot = (b2Vec2){7.2f, 4.0f};
+    b2Vec2 seesawPivot = (b2Vec2){4.2f, 4.0f};
+    float platformLength = 6.0f;
 
     // Seesaw pillar
     int pillarIDX = LayoutBoxCount;
@@ -391,12 +406,12 @@ void AddLayoutGeometry(b2Vec2 worldSize){
     // seesaw platform
     int platformIDX = LayoutBoxCount;
     AddLayoutBox((b2Vec2)    {seesawPivot.x, seesawPivot.y},
-                 (b2BoxScale){13.5f,1.0f},
+                 (b2BoxScale){platformLength, 1.0f},
                  IS_DYNAMIC);
 
     // ball holder.
     int ballHolderIDX = LayoutBoxCount;
-    AddLayoutBox((b2Vec2)    {seesawPivot.x-(13.5f/2.0f), seesawPivot.y+0.5f},
+    AddLayoutBox((b2Vec2)    {seesawPivot.x-(platformLength/2.0f), seesawPivot.y+0.5f},
                  (b2BoxScale){0.2f,2.0f},
                  IS_DYNAMIC);
 
@@ -417,7 +432,7 @@ void AddLayoutGeometry(b2Vec2 worldSize){
         AddLayoutDomino((b2Vec2){x, 1.2f}, dominoSize, IS_DYNAMIC);
     }
 
-    Balls[0] = CreateBall((b2Vec2){1.5f,13.0f},1.0f, IS_DYNAMIC);
+    Balls[0] = CreateBall((b2Vec2){2.25f,5.0f},0.5f, IS_DYNAMIC);
 
 }
 
@@ -444,6 +459,7 @@ int main(){
         float gravity_y = -10.f;
         worldId = InitWorld(gravity_y);
         AddLayoutGeometry(worldSize);
+        AttemptSpawnBox((b2Vec2){6.0f,18.0f});
 
         while (!WindowShouldClose() && !QueueRestart) {
             HandleInput();
@@ -456,6 +472,7 @@ int main(){
         if (QueueRestart) RestartSimulation();
     } while(QueueRestart==true);
 
+    b2DestroyWorld(worldId);
     CloseWindow(); 
 }
 
