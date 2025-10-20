@@ -1,5 +1,11 @@
-.DS_Store
-.cache/
-.cache/*
-compile_commands.json
-bin/*
+*
+
+!.gitignore
+!*/
+!*.c
+!*.h
+!Makefile
+!README.md
+
+*.o
+*.out

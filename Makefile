@@ -1,61 +1,105 @@
-# Default goal builds the final program.
-all: bin/RayBox2D
+.PHONY: $(PROG) all clean run debug tsan $(OBJS)
 
-# Mark non-file targets as always-out-of-date.
-.PHONY: all run clean
+PROG	:=RayBox2D
 
-# Program name and host check.
-PROG := RayBox2D
-UNAME := $(shell uname)
-
-# Fail fast on non-macOS since libs are macOS/arm64.
-ifneq ($(UNAME),Darwin)
-$(error Non-macOS detected. This build uses arm64 macOS static libs.)
+ifneq ($(shell uname),Darwin)
+	$(error OS is incompatible, please use macOS.) 
 endif
+# compiler
+CC_C	:= gcc
+CFLAGS	:= -Iinclude -Ithird_party -std=c2x -O0
+CFLAGS	+=$(shell pkg-config --cflags raylib) 
+CFLAGS	+=-I/opt/homebrew/Cellar/box2d/3.1.1/include/
 
-# Toolchain and language mode.
-CC := clang
-CSTD := c2x
+# source
+SRC 	:= $(wildcard src/*.c)
 
-# Source files and their matching object files.
-SRC  := $(wildcard src/*.c)                           # e.g., src/main.c src/game.c
-OBJ  := $(patsubst src/%.c,build/%.o,$(SRC))          # -> build/main.o build/game.o
+#object files glob
+OBJS	:= $(SRC:.c=.o)
 
-# Include search paths and compile flags.
-INCLUDES := -Iinclude -Ithird_party
-CFLAGS   := -std=$(CSTD) $(INCLUDES) -O0
+# linker
+LDLIBS	:= $(shell pkg-config --libs raylib)	
 
-# Static libs and Apple frameworks for raylib on macOS.
-RAYLIB := lib/raylib_arm64.a
-BOX2D	:= lib/box2d_arm64.a
-FRAMEWORKS := -framework CoreVideo -framework IOKit -framework Cocoa -framework OpenGL
-# If you add Box2D (C++), use clang++ to link and add the static lib after objects.
-# CXX := clang++
-# BOX2D := lib/box2d_arm64.a
+BOX2D_LIB := /opt/homebrew/lib/libbox2d.3.1.1.dylib
+BOX2D_FLAGS := -framework CoreVideo -framework IOKit -framework Cocoa -framework OpenGL
 
-# Link rule: build the final binary from all objects.
-# "bin" is an order-only prerequisite so the dir exists but doesn't force relink.
-bin/$(PROG): $(OBJ) | bin
-	$(CC) $(OBJ) $(RAYLIB) $(BOX2D) $(FRAMEWORKS) -o $@
-	# With Box2D:
-	# $(CXX) $(OBJ) $(RAYLIB) $(BOX2D) $(FRAMEWORKS) -o $@
 
-# Compile rule: one C source -> one object.
-# "build" is order-only to ensure the dir exists.
-build/%.o: src/%.c | build
-	$(CC) $(CFLAGS) -c $< -o $@
+# TERM_COLS:=$(shell tput cols) 
+FMT_RESET	:=tput sgr0
+FMT_REDBANNER	:=tput rev; tput bold; tput setaf 1
+FMT_GREENBANNER	:=tput rev; tput bold; tput setaf 2
+FMT_YELLOWBANNER:=tput rev; tput bold; tput setaf 3
+FMT_REV		:=tput rev; tput bold; 
 
-# Directory creators (no-op if already present).
-build:
-	mkdir -p build
 
-bin:
-	mkdir -p bin
+all: $(PROG)
 
-# Convenience target: ensure program exists, then run it.
-run: bin/$(PROG)
-	./$<
 
-# Remove intermediates and the final binary.
-clean:
-	rm -rf build bin/$(PROG)
+#compile .c into .o (compilation proper)
+%.o : %.c
+	@$(FMT_GREENBANNER)
+	@echo " COMPILE SRC -> OBJ  > " 
+	@$(FMT_RESET)
+	$(CC_C) $(CFLAGS) -c $< -o $@ 
+	@printf "\n"
+
+# build executable (linking)
+$(PROG): $(OBJS) 
+	@$(FMT_YELLOWBANNER); echo " LINKING OBJ -> BIN  > "; $(FMT_RESET)
+	$(CC_C) $(LDFLAGS) $(OBJS) $(BOX2D_LIB) $(BOX2D_FLAGS) -o $(PROG) $(LDLIBS) 
+	@printf "\n"
+
+# RUN PROGRAM - DEFINE A:= ANY PROGRAM_ARGS
+run: clean $(PROG)
+	@$(FMT_REDBANNER)
+	@echo " EXECUTING BINARY: " 
+	@$(FMT_RESET)
+	$(ASAN_ENV) ./$(PROG) $(A)
+	@printf "\n"
+
+# DEBUG PROGRAM
+debug: CFLAGS+= -g
+debug: $(PROG)
+	lldb -o run -- $(PROG) $(TERM_COLS) $(A)
+
+# ADSAN
+
+	
+# Target specific variables: this allows us to change variables only for certain targets
+tsan: CFLAGS  += -fsanitize=thread -fno-omit-frame-pointer 
+tsan: LDFLAGS += -fsanitize=thread
+tsan: LDLIBS  += -fsanitize=thread
+tsan: clean run 
+	
+# Address san: lower overhead than thread-san, cleaner stack traces,
+asan: CFLAGS  += -fsanitize=address -fno-omit-frame-pointer
+asan: LDFLAGS += -fsanitize=address
+asan: LDLIBS  += -fsanitize=address
+asan: ASAN_ENV:= ASAN_OPTIONS=abort_on_error=1
+asan: clean run 
+
+usan: CFLAGS  += -fsanitize=undefined -fno-omit-frame-pointer 
+usan: LDFLAGS += -fsanitize=undefined 
+usan: LDLIBS  += -fsanitize=undefined 
+usan: clean run 
+
+
+ausan: CFLAGS  += -fsanitize=address,undefined -fno-omit-frame-pointer
+ausan: LDFLAGS += -fsanitize=address,undefined
+ausan: LDLIBS  += -fsanitize=address,undefined
+ausan: CFLAGS+= -fsanitize-address-use-after-scope
+ausan: ASAN_ENV:= ASAN_OPTIONS=abort_on_error=1
+
+ausan: CFLAGS  += -fsanitize=undefined -fno-omit-frame-pointer 
+ausan: LDFLAGS += -fsanitize=undefined 
+ausan: LDLIBS  += -fsanitize=undefined 
+ausan: clean run
+
+
+
+
+clean: 
+	@$(FMT_REV)
+	@echo " REMOVING EXECUTABLES AND OBJECT FILES... "
+	@$(FMT_RESET)
+	rm -f $(PROG) $(OBJS)
