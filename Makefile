@@ -23,7 +23,7 @@ OBJ  := $(patsubst src/%.c,build/%.o,$(SRC))          # -> build/main.o build/ga
 
 # Include search paths and compile flags.
 INCLUDES := -Iinclude -Ithird_party
-CFLAGS   := -std=$(CSTD) $(INCLUDES) -O0
+CFLAGS   := -std=$(CSTD) $(INCLUDES) -O3
 
 # Static libs and Apple frameworks for raylib on macOS.
 RAYLIB := lib/raylib_arm64.a
