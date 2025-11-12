@@ -10,7 +10,7 @@ Part of a rube goldberg machine for a group task in an ENG subject.
 
 
 # Libraries Used 
-*For both libraries, they are linked through static libraries compiled for ARM64. They definitely only work on ARM64, and probably only work on macos as well.* (I wanted to learn a bit more about the compilation process)
+*Both are static libs compiled for ARM64 macos.*
 
 ## Raylib 
 Avaliable [here](https://github.com/sponsors/raysan5). Super well documented, extremely good user experience. By far the best graphics library in C ive used so far. 
